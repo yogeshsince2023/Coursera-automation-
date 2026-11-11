@@ -6,6 +6,7 @@ import { DEFAULT_SETTINGS, type AutomationSettings } from '../src/types';
 
 export default defineContentScript({
   matches: [
+    '*://*.coursera.org/*',
     '<all_urls>'
   ],
   runAt: 'document_idle',
@@ -84,53 +85,58 @@ export default defineContentScript({
       });
 
       // Floating indicator badge
-      let overlay = document.getElementById('study-assistant-overlay');
-      if (!overlay) {
-        overlay = document.createElement('div');
-        overlay.id = 'study-assistant-overlay';
-        overlay.style.cssText = `
-          position: fixed;
-          top: 14px;
-          right: 140px;
-          z-index: 999999;
-          background: rgba(15, 23, 42, 0.94);
-          backdrop-filter: blur(8px);
-          color: #f8fafc;
-          border: 1.5px solid #6366f1;
-          border-radius: 20px;
-          padding: 6px 14px;
-          font-size: 12px;
-          font-weight: 600;
-          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-          box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          user-select: none;
-          cursor: pointer;
-          transition: all 0.2s ease;
-        `;
-        overlay.innerHTML = `
-          <span style="width:10px;height:10px;border-radius:50%;background:#10b981;display:inline-block;box-shadow:0 0 8px #10b981;" id="study-status-dot"></span>
-          <span id="study-status-text">Coursera Auto-Pilot: ACTIVE</span>
-        `;
-        document.body.appendChild(overlay);
+      function ensureOverlay(): HTMLElement {
+        let overlay = document.getElementById('study-assistant-overlay');
+        if (!overlay) {
+          overlay = document.createElement('div');
+          overlay.id = 'study-assistant-overlay';
+          overlay.style.cssText = `
+            position: fixed;
+            top: 14px;
+            right: 140px;
+            z-index: 2147483647;
+            background: rgba(15, 23, 42, 0.96);
+            backdrop-filter: blur(8px);
+            color: #f8fafc;
+            border: 1.5px solid #6366f1;
+            border-radius: 20px;
+            padding: 6px 14px;
+            font-size: 12px;
+            font-weight: 600;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            user-select: none;
+            cursor: pointer;
+            transition: all 0.2s ease;
+          `;
+          overlay.innerHTML = `
+            <span style="width:10px;height:10px;border-radius:50%;background:#10b981;display:inline-block;box-shadow:0 0 8px #10b981;" id="study-status-dot"></span>
+            <span id="study-status-text">Coursera Auto-Pilot: ACTIVE</span>
+          `;
+          (document.body || document.documentElement).appendChild(overlay);
 
-        overlay.addEventListener('click', () => {
-          currentSettings.enabled = !currentSettings.enabled;
-          try {
-            chrome.storage.local.set({ enabled: currentSettings.enabled });
-          } catch {}
-          orchestratorActor.send({ type: 'UPDATE_SETTINGS', settings: currentSettings });
-          updateOverlay(currentSettings.enabled, currentSettings.enabled ? 'Running' : 'Paused');
-          if (currentSettings.enabled) {
-            human.startIdleHeartbeat();
-            orchestratorActor.send({ type: 'TICK' });
-          } else {
-            human.stopIdleHeartbeat();
-          }
-        });
+          overlay.addEventListener('click', () => {
+            currentSettings.enabled = !currentSettings.enabled;
+            try {
+              chrome.storage.local.set({ enabled: currentSettings.enabled });
+            } catch {}
+            orchestratorActor.send({ type: 'UPDATE_SETTINGS', settings: currentSettings });
+            updateOverlay(currentSettings.enabled, currentSettings.enabled ? 'Running' : 'Paused');
+            if (currentSettings.enabled) {
+              human.startIdleHeartbeat();
+              orchestratorActor.send({ type: 'TICK' });
+            } else {
+              human.stopIdleHeartbeat();
+            }
+          });
+        }
+        return overlay;
       }
+
+      ensureOverlay();
 
       const STATE_LABELS: Record<string, string> = {
         idle: 'Ready / Waiting',
@@ -147,6 +153,7 @@ export default defineContentScript({
       };
 
       function updateOverlay(active: boolean, stateName?: string) {
+        ensureOverlay();
         const dot = document.getElementById('study-status-dot');
         const text = document.getElementById('study-status-text');
         if (dot && text) {
@@ -280,21 +287,18 @@ export default defineContentScript({
         return true;
       });
 
-      // Storage sync: Default to ACTIVE
+      // Storage sync: Default to ACTIVE on startup
       try {
         chrome.storage.local.get(null, (stored) => {
-          if (stored && typeof stored.enabled === 'boolean') {
-            currentSettings = { ...currentSettings, ...stored };
-          } else {
-            currentSettings.enabled = true;
-            chrome.storage.local.set({ enabled: true });
+          currentSettings.enabled = true;
+          if (stored) {
+            currentSettings = { ...currentSettings, ...stored, enabled: true };
           }
+          try { chrome.storage.local.set({ enabled: true }); } catch {}
           orchestratorActor.send({ type: 'UPDATE_SETTINGS', settings: currentSettings });
-          updateOverlay(currentSettings.enabled, currentSettings.enabled ? 'Running' : 'Paused');
-          if (currentSettings.enabled) {
-            human.startIdleHeartbeat();
-            orchestratorActor.send({ type: 'TICK' });
-          }
+          updateOverlay(true, 'Running');
+          human.startIdleHeartbeat();
+          orchestratorActor.send({ type: 'TICK' });
         });
 
         chrome.storage.onChanged.addListener((changes) => {
@@ -327,7 +331,7 @@ export default defineContentScript({
             orchestratorActor.send({ type: 'TICK' });
           }
         }
-      }, 2500);
+      }, 1000);
 
     } catch (e) {
       console.error('[Study Assistant TS] Startup error:', e);

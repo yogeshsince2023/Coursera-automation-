@@ -1,6 +1,12 @@
 export default defineBackground(() => {
   console.log('[Background Service Worker] Coursera Study Assistant active.');
 
+  chrome.runtime.onInstalled.addListener(() => {
+    try {
+      chrome.storage.local.set({ enabled: true });
+    } catch {}
+  });
+
   // Background Keep-Alive & Active Tab Pacer:
   // Chrome throttles timers in inactive/background tabs. Pinging open Coursera tabs
   // ensures continuous 16x video playback and auto-advancing even when the tab is hidden!
@@ -15,5 +21,5 @@ export default defineBackground(() => {
         }
       });
     } catch {}
-  }, 1500);
+  }, 1000);
 });

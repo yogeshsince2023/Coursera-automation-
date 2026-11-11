@@ -22,6 +22,7 @@ export default defineConfig({
     description: 'Autonomous, human-paced course completion and tracking engine for Coursera.',
     permissions: ['storage', 'activeTab', 'tabs'],
     host_permissions: [
+      '*://*.coursera.org/*',
       '<all_urls>'
     ],
     action: {

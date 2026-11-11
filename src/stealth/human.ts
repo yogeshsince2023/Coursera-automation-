@@ -125,6 +125,12 @@ export class HumanEngine {
   public async naturalClick(element: HTMLElement): Promise<boolean> {
     if (!element) return false;
 
+    // Hidden tabs throttle timers to 1/s or worse; the animated path below would take minutes
+    if (document.hidden) {
+      element.click();
+      return true;
+    }
+
     try {
       element.scrollIntoView({ behavior: 'smooth', block: 'center' });
       await this.sleep(250, 450);
@@ -240,6 +246,8 @@ export class HumanEngine {
   public startIdleHeartbeat(): void {
     if (this.heartbeatInterval) return;
     this.heartbeatInterval = window.setInterval(async () => {
+      // In a hidden tab each step takes 1s+ and the moves pile up, eating the tab's timer budget
+      if (document.hidden) return;
       // Smooth natural idle exploration across the page viewport
       const winW = typeof window !== 'undefined' ? window.innerWidth : 1200;
       const winH = typeof window !== 'undefined' ? window.innerHeight : 800;
