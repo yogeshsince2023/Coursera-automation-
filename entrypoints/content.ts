@@ -315,19 +315,33 @@ export default defineContentScript({
         }
 
         console.log('[Study Assistant TS] Received message action:', message);
-        if (message.action === 'SKIP_VIDEO') {
-          const video = adapter.findVideoElement();
-          if (video && video.duration) {
-            try {
-              video.currentTime = video.duration - 0.5;
-              video.dispatchEvent(new Event('timeupdate', { bubbles: true }));
-              video.play().catch(() => {});
-            } catch {
-              video.playbackRate = 2.0;
+        if (message.action === 'COMPLETE_ITEM' || message.action === 'SKIP_VIDEO') {
+          (async () => {
+            const act = adapter.detectActivity();
+            console.log('[Study Assistant TS] Immediate complete requested for activity:', act);
+            if (act === 'video') {
+              await adapter.handleVideo(16.0, true);
+              const video = adapter.findVideoElement();
+              if (video && video.duration) {
+                try {
+                  video.currentTime = video.duration - 0.5;
+                  video.dispatchEvent(new Event('timeupdate', { bubbles: true }));
+                  video.play().catch(() => {});
+                } catch {}
+              }
+              setTimeout(() => adapter.clickNext(), 1000);
+            } else if (act === 'reading') {
+              await adapter.handleReading();
+              setTimeout(() => adapter.clickNext(), 600);
+            } else if (act === 'discussion') {
+              await adapter.handleDiscussion();
+              setTimeout(() => adapter.clickNext(), 600);
+            } else {
+              await adapter.clickNext();
             }
-          }
-          setTimeout(() => adapter.clickNext(), 1000);
+          })();
           sendResponse({ success: true });
+          return true;
         } else if (message.action === 'NEXT_ITEM') {
           adapter.clickNext().then((ok) => sendResponse({ success: ok }));
           return true;

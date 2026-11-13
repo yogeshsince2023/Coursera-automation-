@@ -345,3 +345,4 @@ export class LinkedInLearningAdapter implements PlatformAdapter {
     return false;
   }
 }
+

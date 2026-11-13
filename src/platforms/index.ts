@@ -16,3 +16,4 @@ export function getPlatformAdapter(): PlatformAdapter {
 
 export * from './coursera/adapter';
 export * from './linkedin/adapter';
+
