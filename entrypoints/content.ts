@@ -1,6 +1,7 @@
 import { createActor } from 'xstate';
 import { automationMachine } from '../src/automation/orchestrator';
 import { getPlatformAdapter, type PlatformAdapter } from '../src/platforms';
+import * as courseraApi from '../src/platforms/coursera/api';
 import { human } from '../src/stealth/human';
 import { DEFAULT_SETTINGS, type AutomationSettings } from '../src/types';
 
@@ -299,30 +300,58 @@ export default defineContentScript({
         console.log('[Study Assistant TS] Received message action:', message);
         if (message.action === 'COMPLETE_ITEM' || message.action === 'SKIP_VIDEO') {
           (async () => {
+            console.log('[Study Assistant TS] Immediate complete requested');
+
+            // 1. If on Coursera, run direct API complete
+            if (typeof window !== 'undefined' && window.location.hostname.includes('coursera.org')) {
+              try {
+                const apiRes = await courseraApi.markCurrentItemCompleted();
+                console.log('[Study Assistant TS] markCurrentItemCompleted result:', apiRes);
+                if (apiRes && apiRes.success) {
+                  const vid = adapter.findVideoElement();
+                  if (vid && vid.duration && isFinite(vid.duration)) {
+                    vid.currentTime = Math.max(0, vid.duration - 0.2);
+                    vid.dispatchEvent(new Event('timeupdate', { bubbles: true }));
+                    vid.dispatchEvent(new Event('ended', { bubbles: true }));
+                  }
+                  setTimeout(async () => {
+                    const advanced = await adapter.clickNext();
+                    if (!advanced) {
+                      window.location.reload();
+                    }
+                  }, 1200);
+                  sendResponse({ success: true, message: apiRes.message });
+                  return;
+                }
+              } catch (e) {
+                console.warn('[Study Assistant TS] API complete attempt notice:', e);
+              }
+            }
+
+            // 2. Fallback to adapter handling
             const act = adapter.detectActivity();
-            console.log('[Study Assistant TS] Immediate complete requested for activity:', act);
             if (act === 'video') {
               await adapter.handleVideo(16.0, true);
               const video = adapter.findVideoElement();
               if (video && video.duration) {
                 try {
-                  video.currentTime = video.duration - 0.5;
+                  video.currentTime = Math.max(0, video.duration - 0.2);
                   video.dispatchEvent(new Event('timeupdate', { bubbles: true }));
-                  video.play().catch(() => {});
+                  video.dispatchEvent(new Event('ended', { bubbles: true }));
                 } catch {}
               }
-              setTimeout(() => adapter.clickNext(), 1000);
+              setTimeout(() => adapter.clickNext(), 1200);
             } else if (act === 'reading') {
               await adapter.handleReading();
-              setTimeout(() => adapter.clickNext(), 600);
+              setTimeout(() => adapter.clickNext(), 800);
             } else if (act === 'discussion') {
               await adapter.handleDiscussion();
-              setTimeout(() => adapter.clickNext(), 600);
+              setTimeout(() => adapter.clickNext(), 800);
             } else {
               await adapter.clickNext();
             }
+            sendResponse({ success: true, message: 'Advanced' });
           })();
-          sendResponse({ success: true });
           return true;
         } else if (message.action === 'NEXT_ITEM') {
           adapter.clickNext().then((ok) => sendResponse({ success: ok }));

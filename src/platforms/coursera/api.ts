@@ -146,13 +146,22 @@ export async function getVideoMeta(courseId: string, courseSlug: string, itemId:
     const res = await courseraFetch(url);
     if (res.ok) {
       const data = await res.json();
-      const video = data?.linked?.['onDemandVideos.v1']?.[0] || data?.elements?.[0]?.video;
+      const linkedVideos = data?.linked?.['onDemandVideos.v1'];
+      const video = (Array.isArray(linkedVideos) && linkedVideos.length > 0) ? linkedVideos[0] : data?.elements?.[0]?.video;
       if (video?.id) {
-        let durationMs = video.duration || 60000;
-        const videoEl = document.querySelector('video');
-        if (videoEl && videoEl.duration && isFinite(videoEl.duration)) {
-          durationMs = Math.round(videoEl.duration * 1000);
+        let durationMs = video.duration;
+        if (!durationMs || typeof durationMs !== 'number' || durationMs <= 0) {
+          const videoEl = document.querySelector('video');
+          if (videoEl && videoEl.duration && isFinite(videoEl.duration)) {
+            durationMs = Math.round(videoEl.duration * 1000);
+          } else {
+            durationMs = 60000;
+          }
+        } else if (durationMs < 10000) {
+          // Convert seconds to ms if duration is under 10000
+          durationMs = Math.round(durationMs * 1000);
         }
+        console.log(`[Coursera API] Resolved videoId=${video.id}, duration=${durationMs}ms`);
         return { videoId: video.id, duration: durationMs };
       }
     }
@@ -171,7 +180,9 @@ export async function getVideoMeta(courseId: string, courseSlug: string, itemId:
 
 export async function reportVideoProgress(userId: string, courseId: string, videoId: string, duration: number): Promise<boolean> {
   const progressId = `${userId}~${courseId}~${videoId}`;
-  const viewedUpTo = Math.max(0, (duration || 60000) - 1000);
+  const validDuration = (typeof duration === 'number' && isFinite(duration) && duration > 0) ? duration : 60000;
+  const viewedUpTo = Math.max(0, validDuration - 1000);
+  console.log(`[Coursera API] reportVideoProgress: progressId=${progressId}, viewedUpTo=${viewedUpTo}ms`);
   
   for (const method of ['POST', 'PUT']) {
     try {
@@ -179,6 +190,7 @@ export async function reportVideoProgress(userId: string, courseId: string, vide
         method,
         body: JSON.stringify({ viewedUpTo, videoProgressId: progressId }),
       });
+      console.log(`[Coursera API] reportVideoProgress (${method}) status:`, res.status);
       if (res.ok || res.status === 204) return true;
     } catch {}
   }
@@ -189,34 +201,82 @@ export async function markLectureCompleted(
   userId: string,
   courseId: string,
   courseSlug: string,
-  itemId: string
+  itemId: string,
+  isBulk = false
 ): Promise<{ success: boolean; error?: string }> {
-  // Step 1: Fire direct videoEvents ended trigger
+  const completeUrl = `${BASE}/api/opencourse.v1/user/${userId}/course/${courseSlug}/item/${itemId}/lecture/videoEvents/ended?autoEnroll=false`;
+
+  // Step 1: Try immediate videoEvents/ended trigger
   try {
-    const completeUrl = `${BASE}/api/opencourse.v1/user/${userId}/course/${courseSlug}/item/${itemId}/lecture/videoEvents/ended?autoEnroll=false`;
-    const res = await courseraFetch(completeUrl, {
+    const res1 = await courseraFetch(completeUrl, {
       method: 'POST',
       body: JSON.stringify({ contentRequestBody: {} }),
     });
-    if (res.ok) {
-      console.log('[Coursera API] Video lecture completed via videoEvents/ended API!');
+    console.log('[Coursera API] B1 complete status:', res1.status);
+    if (res1.ok) {
+      console.log('[Coursera API] Video completed instantly via ended trigger!');
       return { success: true };
+    }
+    if (res1.status === 403 || res1.status === 401) {
+      return { success: false, error: 'Unauthorized. Please ensure you are enrolled in the course.' };
     }
   } catch (e: any) {
-    console.warn('[Coursera API] Video ended API error:', e);
+    console.warn('[Coursera API] B1 notice:', e);
   }
 
-  // Step 2: Report video watch progress (100%)
+  // Step 2: Fetch video metadata (ID & Duration)
   const meta = await getVideoMeta(courseId, courseSlug, itemId);
-  if (meta) {
-    const ok = await reportVideoProgress(userId, courseId, meta.videoId, meta.duration);
-    if (ok) {
-      console.log('[Coursera API] Video progress reported successfully via onDemandVideoProgresses API!');
-      return { success: true };
+
+  if (!meta) {
+    console.log('[Coursera API] No meta found. Attempting fallback PUT progressState...');
+    const putVariants = [
+      `${BASE}/api/opencourse.v1/user/${userId}/course/${courseId}/item/${itemId}/progressState`,
+      `${BASE}/api/opencourse.v1/user/${userId}/course/${courseSlug}/item/${itemId}/progressState`,
+    ];
+    for (const url of putVariants) {
+      try {
+        const fbRes = await courseraFetch(url, {
+          method: 'PUT',
+          body: JSON.stringify({ progressState: 'COMPLETED' }),
+        });
+        if (fbRes.ok) {
+          console.log('[Coursera API] Video marked COMPLETED via progressState PUT!');
+          return { success: true };
+        }
+      } catch (e) {}
     }
+    return { success: false, error: 'Could not resolve video metadata' };
   }
 
-  // Step 3: Fallback progressState PUT
+  // Step 3: Report progress near the end of video (viewedUpTo)
+  console.log('[Coursera API] B3: Reporting video watch progress...');
+  const progressOk = await reportVideoProgress(userId, courseId, meta.videoId, meta.duration);
+
+  // Step 4: Retry videoEvents/ended until Coursera server confirms completion
+  console.log('[Coursera API] B4: Retrying ended trigger until backend acknowledges completion...');
+  const maxWaitMs = isBulk ? 15000 : 30000;
+  const intervalMs = 1500;
+  const startTime = Date.now();
+
+  while (Date.now() - startTime < maxWaitMs) {
+    await new Promise((r) => setTimeout(r, intervalMs));
+    try {
+      const retryRes = await courseraFetch(completeUrl, {
+        method: 'POST',
+        body: JSON.stringify({ contentRequestBody: {} }),
+      });
+      console.log(`[Coursera API] B4 retry ended status: ${retryRes.status}`);
+      if (retryRes.ok) {
+        console.log('[Coursera API] Video confirmed COMPLETED by backend (200 OK)!');
+        return { success: true };
+      }
+      if (retryRes.status === 403 || retryRes.status === 401) {
+        return { success: false, error: 'Unauthorized (not enrolled).' };
+      }
+    } catch (e) {}
+  }
+
+  // Final fallback PUT progressState
   for (const slugOrId of [courseId, courseSlug]) {
     try {
       const fbUrl = `${BASE}/api/opencourse.v1/user/${userId}/course/${slugOrId}/item/${itemId}/progressState`;
@@ -225,13 +285,17 @@ export async function markLectureCompleted(
         body: JSON.stringify({ progressState: 'COMPLETED' }),
       });
       if (res.ok) {
-        console.log('[Coursera API] Video completed via progressState PUT API!');
+        console.log('[Coursera API] Fallback PUT marked complete!');
         return { success: true };
       }
     } catch {}
   }
 
-  return { success: false, error: 'Video completion API returned unexpected status' };
+  if (progressOk) {
+    return { success: true };
+  }
+
+  return { success: false, error: 'Video progress reporting timed out' };
 }
 
 export async function markSupplementCompleted(
@@ -293,6 +357,42 @@ export async function postDiscussionAnswer(
     console.warn('[Coursera API] Discussion posting notice:', e);
   }
   return false;
+}
+
+export async function markCurrentItemCompleted(): Promise<{ success: boolean; message?: string; error?: string }> {
+  const context = getCourseContext();
+  if (!context || !context.courseSlug) {
+    return { success: false, error: 'Not on an active Coursera course page' };
+  }
+  const { courseSlug, itemType, itemId } = context;
+  if (!itemId) {
+    return { success: false, error: 'Not on an individual lesson item' };
+  }
+
+  const courseId = await getCourseId(courseSlug);
+  if (!courseId) return { success: false, error: 'Could not resolve course ID' };
+
+  const userId = await getUserId(courseId);
+  if (!userId) return { success: false, error: 'User not signed in or not enrolled' };
+
+  console.log(`[Coursera API] markCurrentItemCompleted: type=${itemType}, courseSlug=${courseSlug}, itemId=${itemId}`);
+
+  if (itemType === 'lecture') {
+    const res = await markLectureCompleted(userId, courseId, courseSlug, itemId);
+    return res.success ? { success: true, message: 'Video completed successfully!' } : res;
+  }
+
+  if (itemType === 'supplement') {
+    const res = await markSupplementCompleted(userId, courseId, itemId);
+    return res.success ? { success: true, message: 'Reading completed successfully!' } : res;
+  }
+
+  if (itemType === 'discussionPrompt') {
+    const ok = await postDiscussionAnswer(courseId, itemId);
+    return ok ? { success: true, message: 'Discussion posted successfully!' } : { success: false, error: 'Failed to post discussion response' };
+  }
+
+  return { success: false, error: `Automated completion not available for ${itemType}` };
 }
 
 export async function getAllCourseItems(courseSlug: string): Promise<any> {

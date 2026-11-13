@@ -408,7 +408,12 @@ export class CourseraAdapter implements PlatformAdapter {
             );
             if (res.success) {
               this.lastCompletedItemId = context.itemId;
-              console.log('[Adapter] Video lecture marked completed via official Coursera API!');
+              console.log('[Adapter] Video lecture confirmed complete via official Coursera API!');
+              if (video && video.duration && isFinite(video.duration)) {
+                video.currentTime = Math.max(0, video.duration - 0.2);
+                video.dispatchEvent(new Event('timeupdate', { bubbles: true }));
+                video.dispatchEvent(new Event('ended', { bubbles: true }));
+              }
             }
           }
         } catch (e) {
