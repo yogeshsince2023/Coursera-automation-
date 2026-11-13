@@ -17,13 +17,14 @@ export default defineConfig({
     },
   }),
   manifest: {
-    name: 'Coursera Autonomous Study Assistant',
-    version: '3.5.0',
-    description: 'Autonomous, human-paced course completion and tracking engine for Coursera.',
+    name: 'Autonomous Study Assistant: Coursera & LinkedIn',
+    version: '3.6.0',
+    description: 'Autonomous, human-paced course completion and tracking engine for Coursera and LinkedIn Learning.',
     permissions: ['storage', 'activeTab', 'tabs'],
     host_permissions: [
       '*://*.coursera.org/*',
-      '<all_urls>'
+      '*://*.linkedin.com/*',
+      'http://localhost/*'
     ],
     action: {
       default_title: 'Study Assistant Dashboard'

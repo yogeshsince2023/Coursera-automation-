@@ -1,13 +1,14 @@
 import { createActor } from 'xstate';
 import { automationMachine } from '../src/automation/orchestrator';
-import { CourseraAdapter } from '../src/platforms/coursera/adapter';
+import { getPlatformAdapter, type PlatformAdapter } from '../src/platforms';
 import { human } from '../src/stealth/human';
 import { DEFAULT_SETTINGS, type AutomationSettings } from '../src/types';
 
 export default defineContentScript({
   matches: [
     '*://*.coursera.org/*',
-    '<all_urls>'
+    '*://*.linkedin.com/*',
+    'http://localhost/*' // popup's "Open Test Simulator"
   ],
   runAt: 'document_idle',
   main() {
@@ -71,10 +72,11 @@ export default defineContentScript({
         autoQuiz: true,
         autoDiscussion: true,
         fastVideo: true,
-        videoSpeed: 16.0
+        videoSpeed: 2.0
       };
 
-      const adapter = new CourseraAdapter();
+      const adapter: PlatformAdapter = getPlatformAdapter();
+      const platformName = adapter.name || 'Coursera';
 
       const orchestratorActor = createActor(automationMachine, {
         input: {
@@ -107,18 +109,20 @@ export default defineContentScript({
             box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
             display: flex;
             align-items: center;
-            gap: 8px;
+            gap: 10px;
             user-select: none;
-            cursor: pointer;
             transition: all 0.2s ease;
           `;
-          overlay.innerHTML = `
-            <span style="width:10px;height:10px;border-radius:50%;background:#10b981;display:inline-block;box-shadow:0 0 8px #10b981;" id="study-status-dot"></span>
-            <span id="study-status-text">Coursera Auto-Pilot: ACTIVE</span>
-          `;
-          (document.body || document.documentElement).appendChild(overlay);
 
-          overlay.addEventListener('click', () => {
+          const statusBtn = document.createElement('div');
+          statusBtn.id = 'study-status-btn';
+          statusBtn.style.cssText = 'display:flex;align-items:center;gap:8px;cursor:pointer;';
+          statusBtn.innerHTML = `
+            <span style="width:10px;height:10px;border-radius:50%;background:#10b981;display:inline-block;box-shadow:0 0 8px #10b981;" id="study-status-dot"></span>
+            <span id="study-status-text">${platformName} Auto-Pilot: ACTIVE</span>
+          `;
+
+          statusBtn.addEventListener('click', () => {
             currentSettings.enabled = !currentSettings.enabled;
             try {
               chrome.storage.local.set({ enabled: currentSettings.enabled });
@@ -132,6 +136,53 @@ export default defineContentScript({
               human.stopIdleHeartbeat();
             }
           });
+
+          overlay.appendChild(statusBtn);
+
+          // If platform has bulk completion capabilities (e.g. Coursera API), render one-click complete button
+          if (typeof adapter.completeAllItems === 'function') {
+            const bulkBtn = document.createElement('button');
+            bulkBtn.id = 'study-bulk-btn';
+            bulkBtn.textContent = '⚡ Complete All';
+            bulkBtn.style.cssText = `
+              background: linear-gradient(135deg, #6366f1, #4f46e5);
+              color: white;
+              border: none;
+              border-radius: 12px;
+              padding: 3px 8px;
+              font-size: 11px;
+              font-weight: 700;
+              cursor: pointer;
+              transition: transform 0.1s, opacity 0.2s;
+            `;
+            bulkBtn.addEventListener('mouseenter', () => { bulkBtn.style.transform = 'scale(1.05)'; });
+            bulkBtn.addEventListener('mouseleave', () => { bulkBtn.style.transform = 'scale(1)'; });
+            bulkBtn.addEventListener('click', async (e) => {
+              e.stopPropagation();
+              const proceed = confirm('Complete all videos and reading supplements in this course right now?');
+              if (!proceed) return;
+
+              bulkBtn.disabled = true;
+              bulkBtn.textContent = '⏳ Starting...';
+              try {
+                const res = await adapter.completeAllItems!((cur, tot) => {
+                  bulkBtn.textContent = `⏳ ${cur}/${tot}`;
+                });
+                alert(res.message);
+                bulkBtn.textContent = '✅ Done!';
+                setTimeout(() => {
+                  window.location.reload();
+                }, 1000);
+              } catch (err: any) {
+                alert('Completion notice: ' + (err?.message || 'Check connection'));
+                bulkBtn.textContent = '⚡ Complete All';
+                bulkBtn.disabled = false;
+              }
+            });
+            overlay.appendChild(bulkBtn);
+          }
+
+          (document.body || document.documentElement).appendChild(overlay);
         }
         return overlay;
       }
@@ -141,11 +192,11 @@ export default defineContentScript({
       const STATE_LABELS: Record<string, string> = {
         idle: 'Ready / Waiting',
         detecting: 'Analyzing Lesson',
-        handlingVideo: 'Playing Video (16x Accelerated)',
+        handlingVideo: 'Accelerating Video',
         waitingCompletion: 'Watching & Syncing Video',
-        handlingReading: 'Reading Item ➔ Skipping',
+        handlingReading: 'Reading Item ➔ Completed',
         handlingQuiz: 'Quiz Assessment ➔ Skipping',
-        handlingDiscussion: 'Discussion Prompt ➔ Skipping',
+        handlingDiscussion: 'Discussion Prompt ➔ Completed',
         handlingModal: 'Closing Dialog',
         advancing: 'Advancing to Next Item ➔',
         cooldown: 'Loading Next Lesson...',
@@ -160,7 +211,7 @@ export default defineContentScript({
           if (!active) {
             dot.style.background = '#ef4444';
             dot.style.boxShadow = 'none';
-            text.textContent = 'Coursera Auto-Pilot: PAUSED (Click to Start)';
+            text.textContent = `${platformName} Auto-Pilot: PAUSED`;
             return;
           }
 
@@ -182,13 +233,13 @@ export default defineContentScript({
                 const sec = Math.floor(s % 60);
                 return `${m.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`;
               };
-              text.textContent = `📹 Playing (16x): ${prog.percent}% (${formatSec(prog.current)} / ${formatSec(prog.duration)})`;
+              text.textContent = `📹 Playing: ${prog.percent}% (${formatSec(prog.current)} / ${formatSec(prog.duration)})`;
               return;
             }
           }
 
           const friendly = STATE_LABELS[currentSnap] || currentSnap.toUpperCase();
-          text.textContent = `Coursera Auto-Pilot: ${friendly}`;
+          text.textContent = `${platformName} Auto-Pilot: ${friendly}`;
         }
       }
 
@@ -242,13 +293,13 @@ export default defineContentScript({
       chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         if (message.action === 'BACKGROUND_HEARTBEAT') {
           if (currentSettings.enabled) {
-            // Keep background video playing uninterrupted at 16x
+            // Keep background video playing uninterrupted at 2x
             const vid = adapter.findVideoElement();
             if (vid) {
               const isEnded = vid.ended || (vid.duration > 0 && vid.currentTime >= vid.duration - 0.75);
               if (!isEnded) {
                 try {
-                  if (vid.playbackRate !== 16.0) vid.playbackRate = 16.0;
+                  if (vid.playbackRate !== 2.0) vid.playbackRate = 2.0;
                   if (vid.paused) vid.play().catch(() => {});
                 } catch {}
               }
@@ -272,7 +323,7 @@ export default defineContentScript({
               video.dispatchEvent(new Event('timeupdate', { bubbles: true }));
               video.play().catch(() => {});
             } catch {
-              video.playbackRate = 16.0;
+              video.playbackRate = 2.0;
             }
           }
           setTimeout(() => adapter.clickNext(), 1000);
@@ -283,6 +334,18 @@ export default defineContentScript({
         } else if (message.action === 'MARK_READING') {
           adapter.handleReading().then(() => sendResponse({ success: true }));
           return true;
+        } else if (message.action === 'COMPLETE_ALL') {
+          if (typeof adapter.completeAllItems === 'function') {
+            adapter.completeAllItems((c, t) => {
+              chrome.runtime.sendMessage({ action: 'BULK_PROGRESS', current: c, total: t }).catch(() => {});
+            }).then((res) => {
+              sendResponse(res);
+            });
+            return true;
+          } else {
+            sendResponse({ success: false, message: 'Platform does not support bulk completion' });
+            return true;
+          }
         }
         return true;
       });

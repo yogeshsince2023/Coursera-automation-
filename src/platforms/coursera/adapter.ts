@@ -1,7 +1,9 @@
 import type { ActivityType } from '../../types';
 import { human } from '../../stealth/human';
+import * as courseraApi from './api';
 
 export interface PlatformAdapter {
+  name?: string;
   detectActivity(): ActivityType;
   handleVideo(speed: number, fastVideo: boolean): Promise<boolean>;
   handleReading(): Promise<boolean>;
@@ -12,10 +14,16 @@ export interface PlatformAdapter {
   isActivityCompleted(): boolean;
   getVideoProgress(): { current: number; duration: number; percent: number; speed: number } | null;
   hasGreenCompletionTick(): boolean;
+  findVideoElement(): HTMLVideoElement | null;
+  completeAllItems?(onProgress?: (current: number, total: number) => void): Promise<{ success: boolean; completed: number; total: number; message: string }>;
 }
 
 export class CourseraAdapter implements PlatformAdapter {
+  public name = 'Coursera';
   private videoEndedTimestamp: number | null = null;
+  private cachedUserId: string | null = null;
+  private cachedCourseId: string | null = null;
+  private lastCompletedItemId: string | null = null;
 
   private selectors = {
     // Next / Advance Navigation
@@ -380,23 +388,43 @@ export class CourseraAdapter implements PlatformAdapter {
       return false;
     }
 
-    // 4. Mute video for reliable playback in background tabs
-    video.muted = true;
-    video.volume = 0;
-    video.defaultMuted = true;
+    // 4. API Instant Completion Trigger (Direct Coursera server completion)
+    const context = courseraApi.getCourseContext();
+    if (context && context.itemType === 'lecture' && context.itemId && this.lastCompletedItemId !== context.itemId) {
+      (async () => {
+        try {
+          if (!this.cachedCourseId && context.courseSlug) {
+            this.cachedCourseId = await courseraApi.getCourseId(context.courseSlug);
+          }
+          if (!this.cachedUserId) {
+            this.cachedUserId = await courseraApi.getUserId(this.cachedCourseId);
+          }
+          if (this.cachedUserId && this.cachedCourseId && context.itemId) {
+            const res = await courseraApi.markLectureCompleted(
+              this.cachedUserId,
+              this.cachedCourseId,
+              context.courseSlug,
+              context.itemId
+            );
+            if (res.success) {
+              this.lastCompletedItemId = context.itemId;
+              console.log('[Adapter] Video lecture marked completed via official Coursera API!');
+            }
+          }
+        } catch (e) {
+          console.warn('[Adapter] API lecture completion note:', e);
+        }
+      })();
+    }
 
-    // 5. Playback rate enforcement (Continuous stream acceleration)
-    const targetSpeed = fastVideo ? 16.0 : Math.min(speed, 2.0);
+    // 5. Playback rate: fastVideo accelerates up to 16x; normal playback speeds up to 2x
+    const targetSpeed = fastVideo ? 16.0 : Math.min(speed || 2.0, 2.0);
     try {
       if (video.playbackRate !== targetSpeed) {
         video.playbackRate = targetSpeed;
       }
     } catch {
-      try {
-        video.playbackRate = 8.0;
-      } catch {
-        video.playbackRate = 2.0;
-      }
+      try { video.playbackRate = 8.0; } catch { video.playbackRate = 2.0; }
     }
 
     // 6. VIDEO COMPLETION CHECK (CRITICAL: Handled BEFORE any unpause logic!)
@@ -473,16 +501,34 @@ export class CourseraAdapter implements PlatformAdapter {
   }
 
   public async handleReading(): Promise<boolean> {
-    console.log('[Adapter] Reading item encountered. Attempting to mark complete...');
+    console.log('[Adapter] Reading item encountered. Attempting completion via API & DOM...');
+    const context = courseraApi.getCourseContext();
+    if (context && (context.itemType === 'supplement' || context.itemId)) {
+      try {
+        if (!this.cachedCourseId && context.courseSlug) {
+          this.cachedCourseId = await courseraApi.getCourseId(context.courseSlug);
+        }
+        if (!this.cachedUserId) {
+          this.cachedUserId = await courseraApi.getUserId(this.cachedCourseId);
+        }
+        if (this.cachedUserId && this.cachedCourseId && context.itemId) {
+          await courseraApi.markSupplementCompleted(this.cachedUserId, this.cachedCourseId, context.itemId);
+          console.log('[Adapter] Reading marked completed via API!');
+        }
+      } catch (e) {
+        console.warn('[Adapter] Reading API notice:', e);
+      }
+    }
+
     const completeBtns = Array.from(document.querySelectorAll<HTMLButtonElement>(
-      'button[data-testid*="complete" i], button.rc-MarkAsCompletedButton, #markDoneBtn, button[data-track-component*="completed" i]'
+      'button[data-testid*="complete" i], button.rc-MarkAsCompletedButton, #markDoneBtn, button[data-track-component*="completed" i], button[aria-label*="Mark as complete" i]'
     ));
     for (const btn of completeBtns) {
       if (this.isVisible(btn)) {
         btn.removeAttribute('disabled');
         btn.removeAttribute('aria-disabled');
         await human.naturalClick(btn);
-        await human.sleep(600, 1000);
+        await human.sleep(300, 600);
         break;
       }
     }
@@ -496,9 +542,56 @@ export class CourseraAdapter implements PlatformAdapter {
   }
 
   public async handleDiscussion(): Promise<boolean> {
-    console.log('[Adapter] Discussion prompt encountered. Skipping per configuration...');
-    await human.sleep(300, 600);
+    console.log('[Adapter] Discussion prompt encountered. Replying to mark complete...');
+    const context = courseraApi.getCourseContext();
+    if (context && (context.itemType === 'discussionPrompt' || context.itemId)) {
+      try {
+        if (!this.cachedCourseId && context.courseSlug) {
+          this.cachedCourseId = await courseraApi.getCourseId(context.courseSlug);
+        }
+        if (this.cachedCourseId && context.itemId) {
+          await courseraApi.postDiscussionAnswer(
+            this.cachedCourseId,
+            context.itemId,
+            'Valuable insights and perspectives on this topic. Thank you for the detailed explanations!'
+          );
+          console.log('[Adapter] Discussion answer posted via API!');
+        }
+      } catch (e) {
+        console.warn('[Adapter] Discussion API notice:', e);
+      }
+    }
+
+    // DOM fallback: fill text input and submit if present
+    try {
+      const editor = document.querySelector<HTMLElement>(
+        'div[contenteditable="true"], textarea, div[role="textbox"]'
+      );
+      if (editor && this.isVisible(editor)) {
+        if (editor.tagName === 'TEXTAREA') {
+          (editor as HTMLTextAreaElement).value = 'Valuable insights and clear explanations. Thank you for sharing!';
+          editor.dispatchEvent(new Event('input', { bubbles: true }));
+        } else {
+          editor.textContent = 'Valuable insights and clear explanations. Thank you for sharing!';
+          editor.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+        await human.sleep(300, 600);
+        const submitBtn = document.querySelector<HTMLButtonElement>(
+          'button[data-testid*="submit" i], button[data-testid*="reply" i], button[data-testid*="post" i], button[aria-label*="Reply" i]'
+        );
+        if (submitBtn && this.isVisible(submitBtn)) {
+          await human.naturalClick(submitBtn);
+        }
+      }
+    } catch {}
+
     return true;
+  }
+
+  public async completeAllItems(
+    onProgress?: (current: number, total: number) => void
+  ): Promise<{ success: boolean; completed: number; total: number; message: string }> {
+    return courseraApi.bulkCompleteAllItems(onProgress);
   }
 
   public async clickNext(): Promise<boolean> {
@@ -664,15 +757,28 @@ export class CourseraAdapter implements PlatformAdapter {
           const isGreen =
             fill.includes('rgb(31, 122, 31)') ||
             fill.includes('rgb(0, 126, 51)') ||
+            fill.includes('rgb(0, 103, 66)') ||
+            fill.includes('rgb(19, 115, 51)') ||
+            fill.includes('rgb(22, 101, 52)') ||
+            fill.includes('rgb(34, 197, 94)') ||
+            fill.includes('rgb(5, 150, 105)') ||
             fill.includes('#1f7a1f') ||
             fill.includes('#007e33') ||
+            fill.includes('#006742') ||
             fill.includes('#059669') ||
+            fill.includes('#137333') ||
+            fill.includes('#166534') ||
+            fill.includes('#22c55e') ||
             color.includes('green') ||
             color.includes('#1f7a1f') ||
+            color.includes('#006742') ||
             style.includes('rgb(31, 122, 31)') ||
+            style.includes('rgb(0, 103, 66)') ||
             style.includes('#1f7a1f') ||
+            style.includes('#006742') ||
             html.includes('rc-completedicon') ||
             html.includes('cds-icon--green') ||
+            html.includes('statusicon-completed') ||
             (html.includes('success') && !html.includes('blue'));
 
           if (isGreen) {
@@ -710,6 +816,13 @@ export class CourseraAdapter implements PlatformAdapter {
       // Immediate Pass: If Coursera already shows the green checkmark for this video in the sidebar
       if (this.hasGreenCompletionTick()) {
         console.log('[Adapter] Video confirmed complete with green tick! Ready to advance.');
+        return true;
+      }
+
+      // If official Coursera API successfully marked this video complete
+      const context = courseraApi.getCourseContext();
+      if (context?.itemId && this.lastCompletedItemId === context.itemId) {
+        console.log('[Adapter] Video confirmed complete via official API call!');
         return true;
       }
 

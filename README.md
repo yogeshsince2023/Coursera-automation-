@@ -1,21 +1,23 @@
-# Coursera Auto-Pilot (Chrome Extension) 🚀
+# Autonomous Study Assistant (Coursera & LinkedIn Learning) 🚀
 
-An autonomous, production-grade Chrome extension built to accelerate and automate Coursera learning paths with intelligent green tick verification, background tab playback, and smart navigation.
+An autonomous, production-grade Chrome extension built to accelerate and automate course completions on **Coursera** and **LinkedIn Learning** with intelligent green tick verification, background tab playback, discussion auto-replying, and smart navigation.
 
 ---
 
 ## ✨ Features
 
-- ⚡ **16x Accelerated Video Playback:** Seamlessly plays video lectures at up to 16x speed while meeting all completion requirements.
-- 🟢 **Green Tick Verification:** Specifically inspects Coursera's sidebar syllabus for the **green completion checkmark** before advancing to the next lesson item.
-- ⏭️ **Auto-Skip & Sequential Progression:** Automatically marks reading items as complete and skips discussions, quizzes, and non-video checkpoints sequentially.
-- 🔄 **Plays in Background Tabs:** Advanced Page Visibility spoofing and background service worker heartbeats ensure videos continue playing even when you switch tabs or minimize the browser window.
-- 📊 **Real-Time On-Screen Status:** Sleek floating pill at the top-right displays active state, current playback percentage, and navigation status.
-- 🛡️ **Anti-Looping Engine:** Freezes finished videos at the end so Coursera's player never restarts or replays the same video from `0:00`.
+- ⚡ **Direct API Instant Completion (Coursera):** Utilizes Coursera's official internal REST APIs with session authentication and CSRF token propagation to complete video lectures and reading supplements directly on the server in ~200ms.
+- 💬 **Discussion Prompt Auto-Reply:** Automatically submits discussion replies to discussion prompts so they turn into **green checkmarks** without getting stuck!
+- 🚀 **1-Click "Complete All" Button:** Floating on-screen badge includes a `⚡ Complete All` button to complete all eligible videos and readings across the entire course in one click.
+- 💼 **LinkedIn Learning Platform Support:** Full native support for `linkedin.com/learning/*` featuring 16x video playback acceleration, automatic audio muting, chapter quiz progression, and table-of-contents checkmark tracking.
+- 🟢 **Green Tick Verification:** Specifically inspects syllabus drawers and DOM elements for genuine green completion icons before advancing to the next item.
+- 🔄 **Plays in Background Tabs:** Advanced Page Visibility spoofing and background service worker heartbeats ensure videos continue playing uninterrupted even when you switch tabs or minimize the browser window.
+- 📊 **Real-Time On-Screen Status:** Sleek floating pill at the top-right displays active state, current playback percentage, platform name, and navigation status.
+- 🛡️ **Anti-Looping Engine:** Freezes finished videos at the end so players never restart or replay the same video from `0:00`.
 
 ---
 
-## 🚀 Quick Start (No Coding / No Setup Required!)
+## 🚀 Quick Start (No Coding / Zero Setup Required!)
 
 Anyone can install and use this extension in **less than 1 minute** without installing Node.js or any programming tools:
 
@@ -29,10 +31,10 @@ Anyone can install and use this extension in **less than 1 minute** without inst
 3. Click the **Load unpacked** button in the top-left corner.
 4. Browse to the extracted folder and select the **`extension`** folder.
 
-### Step 3: Open Coursera
-1. Open any lecture on [coursera.org](https://www.coursera.org/).
-2. You will see the **Coursera Auto-Pilot: ACTIVE** badge at the top right.
-3. Relax and let it autonomously pace through your lessons!
+### Step 3: Open Coursera or LinkedIn Learning
+1. Open any lecture on [coursera.org](https://www.coursera.org/) or [linkedin.com/learning](https://www.linkedin.com/learning/).
+2. You will see the **Auto-Pilot: ACTIVE** floating badge at the top right.
+3. Relax and let it autonomously pace through your lessons or click `⚡ Complete All`!
 
 ---
 
@@ -44,7 +46,7 @@ If you wish to modify the TypeScript source code, you can build it using WXT, Re
 # 1. Install dependencies
 npm install
 
-# 2. Run test verification suite
+# 2. Run test verification suite (9/9 checks)
 npm run test
 
 # 3. Build production bundle (outputs to .output/chrome-mv3 and extension/)
@@ -57,22 +59,25 @@ npm run build
 
 ```text
 ├── extension/                 # Ready-to-load precompiled Chrome extension (Load this unpacked!)
-│   ├── manifest.json          # Chrome Manifest V3 configuration
+│   ├── manifest.json          # Chrome Manifest V3 configuration (Coursera + LinkedIn)
 │   ├── background.js          # Service worker keep-alive heartbeat
 │   ├── content-scripts/       # Automation & DOM injection scripts
 │   ├── popup.html             # Popup control panel
 │   └── icons/                 # Extension icons
 ├── entrypoints/
 │   ├── background.ts          # MV3 Service Worker (Background pacer)
-│   ├── content.ts             # Injected content script & overlay
+│   ├── content.ts             # Injected content script, platform routing & overlay
 │   └── popup/                 # React + Tailwind popup dashboard
 ├── src/
 │   ├── automation/            # XState state machine orchestrator
-│   ├── platforms/coursera/    # Coursera DOM adapter & green tick detector
+│   ├── platforms/             # Platform adapters & multi-platform factory
+│   │   ├── index.ts           # Automatic platform detector (Coursera vs LinkedIn)
+│   │   ├── coursera/          # Coursera DOM adapter & authenticated REST API client
+│   │   └── linkedin/          # LinkedIn Learning DOM adapter & video pacer
 │   ├── stealth/               # Humanized clicking & anti-detection
 │   └── types/                 # TypeScript interfaces
 ├── scripts/
-│   └── verify-adapter.ts      # Automated verification test suite
+│   └── verify-adapter.ts      # Automated verification test suite (9 checks)
 ├── package.json
 └── tsconfig.json
 ```

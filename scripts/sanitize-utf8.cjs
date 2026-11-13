@@ -35,6 +35,12 @@ console.log('Sanitized all build output files for Chrome UTF-8 compliance.');
 // Automatically synchronize compiled bundle to top-level extension/ folder for zero-setup installation
 const extDir = path.join(__dirname, '..', 'extension');
 if (fs.existsSync(outDir)) {
+  // Clean old chunk/asset hashes
+  const chunksDir = path.join(extDir, 'chunks');
+  const assetsDir = path.join(extDir, 'assets');
+  if (fs.existsSync(chunksDir)) fs.rmSync(chunksDir, { recursive: true, force: true });
+  if (fs.existsSync(assetsDir)) fs.rmSync(assetsDir, { recursive: true, force: true });
+
   fs.cpSync(outDir, extDir, { recursive: true, force: true });
   console.log('Synchronized production build to extension/ directory for direct loading.');
 }

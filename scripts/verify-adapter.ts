@@ -1,4 +1,6 @@
 import { CourseraAdapter } from '../src/platforms/coursera/adapter';
+import { LinkedInLearningAdapter } from '../src/platforms/linkedin/adapter';
+import { getPlatformAdapter } from '../src/platforms';
 import { automationMachine } from '../src/automation/orchestrator';
 import { createActor } from 'xstate';
 import { DEFAULT_SETTINGS } from '../src/types';
@@ -164,9 +166,9 @@ async function runTests() {
   mockVid.paused = true;
   await adapter.handleVideo(2.0, false);
   if (mockVid.paused) throw new Error('FAIL: handleVideo did not resume playback!');
-  if (mockVid.muted !== true) throw new Error('FAIL: handleVideo did not mute video!');
+  if (mockVid.muted) throw new Error('FAIL: handleVideo muted the video!');
   if (mockVid.playbackRate !== 2.0) throw new Error(`FAIL: playbackRate is ${mockVid.playbackRate}, expected 2.0!`);
-  console.log('  PASS: Video resumed at 2.0x playback rate and muted.\n');
+  console.log('  PASS: Video resumed at 2.0x playback rate with sound on.\n');
 
   // Test 5: End of Video & Server Grace Period
   console.log('Test 5: Video End & Server Grace Period');
@@ -245,8 +247,26 @@ async function runTests() {
   }
   console.log('  PASS: Green completion tick detected and activity immediately marked completed.\n');
 
+  // Test 9: LinkedIn Learning Adapter & Factory Verification
+  console.log('Test 9: LinkedIn Learning Platform Support');
+  (globalThis as any).window.location = {
+    href: 'https://www.linkedin.com/learning/threat-modeling-fundamentals/pasta-threat-model',
+    pathname: '/learning/threat-modeling-fundamentals/pasta-threat-model',
+    hostname: 'www.linkedin.com',
+    origin: 'https://www.linkedin.com'
+  };
+  const liAdapter = getPlatformAdapter();
+  if (liAdapter.name !== 'LinkedIn Learning') {
+    throw new Error(`FAIL: Platform adapter expected LinkedIn Learning but got ${liAdapter.name}`);
+  }
+  const liActivity = liAdapter.detectActivity();
+  if (liActivity !== 'video') {
+    throw new Error(`FAIL: LinkedIn learning activity expected video, got ${liActivity}`);
+  }
+  console.log('  PASS: LinkedIn Learning adapter detected and handles video activity.\n');
+
   console.log('\n======================================================');
-  console.log('ALL VERIFICATION SUITE CHECKS PASSED SUCCESSFULLY (8/8)');
+  console.log('ALL VERIFICATION SUITE CHECKS PASSED SUCCESSFULLY (9/9)');
   console.log('======================================================\n');
 }
 
