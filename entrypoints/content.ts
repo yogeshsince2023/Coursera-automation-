@@ -14,53 +14,35 @@ export default defineContentScript({
   main() {
     console.log('%c[Study Assistant TS]%c Content script injected and active on page!', 'color:#4f46e5;font-weight:bold;font-size:14px', 'color:inherit');
 
-    // 1. Inject Visibility & Background Throttling Bypass directly into page context
+    // 1. CSP-compliant Visibility & Background Tab Bypass (Zero inline script injection)
     try {
-      const script = document.createElement('script');
-      script.textContent = `
-        (function() {
-          try {
-            Object.defineProperty(document, 'hidden', { get: () => false, configurable: true });
-            Object.defineProperty(document, 'visibilityState', { get: () => 'visible', configurable: true });
-            Object.defineProperty(document, 'webkitHidden', { get: () => false, configurable: true });
-            Object.defineProperty(document, 'webkitVisibilityState', { get: () => 'visible', configurable: true });
-          } catch(e) {}
-
-          const stopEvents = function(e) {
-            e.stopImmediatePropagation();
-          };
-          window.addEventListener('visibilitychange', stopEvents, true);
-          document.addEventListener('visibilitychange', stopEvents, true);
-          window.addEventListener('blur', stopEvents, true);
-          window.addEventListener('focusout', stopEvents, true);
-
-          // Prevent Coursera video player from pausing on tab blur/change
-          document.addEventListener('pause', function(e) {
-            const el = e.target;
-            if (el && el.tagName === 'VIDEO') {
-              if (!el.ended && (el.duration <= 0 || el.currentTime < el.duration - 0.75)) {
-                setTimeout(() => {
-                  if (el.paused && !el.ended) {
-                    el.play().catch(() => {});
-                  }
-                }, 50);
-              }
-            }
-          }, true);
-        })();
-      `;
-      (document.head || document.documentElement).appendChild(script);
-      script.remove();
-    } catch (e) {
-      console.warn('[Study Assistant TS] Visibility injection note:', e);
-    }
-
-    try {
-      Object.defineProperty(document, 'visibilityState', { get: () => 'visible', configurable: true });
       Object.defineProperty(document, 'hidden', { get: () => false, configurable: true });
+      Object.defineProperty(document, 'visibilityState', { get: () => 'visible', configurable: true });
+      Object.defineProperty(document, 'webkitHidden', { get: () => false, configurable: true });
+      Object.defineProperty(document, 'webkitVisibilityState', { get: () => 'visible', configurable: true });
     } catch {}
-    window.addEventListener('visibilitychange', (e) => e.stopImmediatePropagation(), true);
-    document.addEventListener('visibilitychange', (e) => e.stopImmediatePropagation(), true);
+
+    const stopEvents = (e: Event) => {
+      e.stopImmediatePropagation();
+    };
+    window.addEventListener('visibilitychange', stopEvents, true);
+    document.addEventListener('visibilitychange', stopEvents, true);
+    window.addEventListener('blur', stopEvents, true);
+    window.addEventListener('focusout', stopEvents, true);
+
+    // Prevent video player from pausing on tab blur/change
+    document.addEventListener('pause', (e: Event) => {
+      const el = e.target as HTMLVideoElement;
+      if (el && el.tagName === 'VIDEO') {
+        if (!el.ended && (el.duration <= 0 || el.currentTime < el.duration - 0.75)) {
+          setTimeout(() => {
+            if (el.paused && !el.ended) {
+              el.play().catch(() => {});
+            }
+          }, 50);
+        }
+      }
+    }, true);
 
     try {
       let currentSettings: AutomationSettings = {
